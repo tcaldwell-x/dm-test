@@ -14,7 +14,7 @@ Sign in with X via **3-legged OAuth 1.0a**. Those v1.1 endpoints do not accept O
 | Welcome messages | new / show / list / update / destroy |
 | Welcome rules | new / show / list / destroy |
 | Custom profiles | new / `:id` / list / destroy |
-| Media | `upload.twitter.com/1.1/media/upload.json` (simple + chunked) |
+| Media | `POST /2/media/upload` (images); `initialize` / `{id}/append` / `{id}/finalize` / `STATUS` (video) |
 | Lookup | `GET /1.1/users/show.json` |
 
 NPS and CSAT create forms include every official question variant (NPS 0–9, CSAT 0–37).

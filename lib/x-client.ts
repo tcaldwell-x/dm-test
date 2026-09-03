@@ -103,108 +103,171 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-export async function uploadMedia(
-  input: {
-    bytes: Uint8Array;
-    filename: string;
-    mimeType: string;
-    mediaCategory: "dm_image" | "dm_gif" | "dm_video";
-  },
-  credentials: OAuthCredentials,
-): Promise<ProxyResult> {
-  const isChunked = input.mediaCategory === "dm_video" || input.bytes.byteLength > 4_500_000;
-  if (!isChunked) {
-    return simpleUpload(input, credentials);
+const MEDIA_V2 = "https://api.x.com/2/media/upload";
+
+type MediaUploadInput = {
+  bytes: Uint8Array;
+  filename: string;
+  mimeType: string;
+  mediaCategory: "dm_image" | "dm_gif" | "dm_video";
+};
+
+function parseJsonBody(text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
-  return chunkedUpload(input, credentials);
 }
 
-async function simpleUpload(
-  input: {
-    bytes: Uint8Array;
-    filename: string;
-    mimeType: string;
-    mediaCategory: "dm_image" | "dm_gif" | "dm_video";
-  },
-  credentials: OAuthCredentials,
-): Promise<ProxyResult> {
-  const extraParams = { media_category: input.mediaCategory };
-  const url = "https://upload.twitter.com/1.1/media/upload.json";
-  const form = new FormData();
-  form.set("media_category", input.mediaCategory);
-  form.set("media", new Blob([toArrayBuffer(input.bytes)], { type: input.mimeType }), input.filename);
-
-  const started = Date.now();
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: signOAuth1({
-        method: "POST",
-        url,
-        credentials,
-        extraParams,
-      }),
-    },
-    body: form,
-  });
-
-  const text = await response.text();
-  let parsed: unknown = text;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = text;
+function mediaIdFrom(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const record = body as Record<string, unknown>;
+  const data = record.data as Record<string, unknown> | undefined;
+  const candidates = [data?.id, data?.media_id_string, record.media_id_string, record.id];
+  for (const value of candidates) {
+    if (typeof value === "string" && value) return value;
+    if (typeof value === "number") return String(value);
   }
+  return undefined;
+}
 
+function processingInfo(body: unknown): { state?: string; check_after_secs?: number; error?: unknown } | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const record = body as Record<string, unknown>;
+  const data = record.data as Record<string, unknown> | undefined;
+  const info = (data?.processing_info ?? record.processing_info) as
+    | { state?: string; check_after_secs?: number; error?: unknown }
+    | undefined;
+  return info;
+}
+
+async function signedRequest(input: {
+  method: "GET" | "POST";
+  url: string;
+  credentials: OAuthCredentials;
+  extraParams?: Record<string, string>;
+  headers?: Record<string, string>;
+  body?: BodyInit;
+}): Promise<{ ok: boolean; status: number; body: unknown; url: string }> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...input.headers,
+    Authorization: signOAuth1({
+      method: input.method,
+      url: input.url,
+      credentials: input.credentials,
+      extraParams: input.extraParams,
+    }),
+  };
+  const response = await fetch(input.url, {
+    method: input.method,
+    headers,
+    body: input.body,
+  });
   return {
     ok: response.ok,
     status: response.status,
-    url,
+    url: input.url,
+    body: parseJsonBody(await response.text()),
+  };
+}
+
+export async function uploadMedia(
+  input: MediaUploadInput,
+  credentials: OAuthCredentials,
+): Promise<ProxyResult> {
+  const useChunked = input.mediaCategory === "dm_video" || input.bytes.byteLength > 4_500_000;
+  if (useChunked) {
+    return chunkedUploadV2(input, credentials);
+  }
+  return simpleUploadV2(input, credentials);
+}
+
+async function simpleUploadV2(
+  input: MediaUploadInput,
+  credentials: OAuthCredentials,
+): Promise<ProxyResult> {
+  const extraParams = {
+    media_category: input.mediaCategory,
+    media_type: input.mimeType,
+  };
+  const form = new FormData();
+  form.set("media_category", input.mediaCategory);
+  form.set("media_type", input.mimeType);
+  form.set("media", new Blob([toArrayBuffer(input.bytes)], { type: input.mimeType }), input.filename);
+
+  const started = Date.now();
+  const result = await signedRequest({
+    method: "POST",
+    url: MEDIA_V2,
+    credentials,
+    extraParams,
+    body: form,
+  });
+  const mediaId = mediaIdFrom(result.body);
+
+  return {
+    ok: result.ok,
+    status: result.status,
+    url: result.url,
     method: "POST",
     requestBody: {
+      mode: "simple",
+      endpoint: "POST /2/media/upload",
       media_category: input.mediaCategory,
+      media_type: input.mimeType,
       filename: input.filename,
       bytes: input.bytes.byteLength,
-      mode: "simple",
+      media_id: mediaId,
     },
-    body: parsed,
+    body: mediaId ? { media_id: mediaId, ...(typeof result.body === "object" && result.body ? result.body : {}) } : result.body,
     ms: Date.now() - started,
   };
 }
 
-async function chunkedUpload(
-  input: {
-    bytes: Uint8Array;
-    filename: string;
-    mimeType: string;
-    mediaCategory: "dm_image" | "dm_gif" | "dm_video";
-  },
+async function chunkedUploadV2(
+  input: MediaUploadInput,
   credentials: OAuthCredentials,
 ): Promise<ProxyResult> {
   const started = Date.now();
-  const init = await callXApi(
-    {
-      method: "POST",
-      host: "upload.twitter.com",
-      path: "/1.1/media/upload.json",
-      bodyType: "form",
-      body: {
-        command: "INIT",
-        total_bytes: String(input.bytes.byteLength),
-        media_type: input.mimeType,
-        media_category: input.mediaCategory,
-      },
-    },
-    credentials,
-  );
+  const steps: unknown[] = [];
 
-  if (!init.ok) return init;
-  const mediaId = (init.body as { media_id_string?: string })?.media_id_string;
+  const init = await signedRequest({
+    method: "POST",
+    url: `${MEDIA_V2}/initialize`,
+    credentials,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      media_type: input.mimeType,
+      total_bytes: input.bytes.byteLength,
+      media_category: input.mediaCategory,
+    }),
+  });
+  steps.push({ step: "initialize", ...init });
+  if (!init.ok) {
+    return {
+      ok: false,
+      status: init.status,
+      url: init.url,
+      method: "POST",
+      requestBody: { mode: "chunked", steps },
+      body: init.body,
+      ms: Date.now() - started,
+    };
+  }
+
+  const mediaId = mediaIdFrom(init.body);
   if (!mediaId) {
     return {
-      ...init,
       ok: false,
-      body: { error: "INIT succeeded but no media_id_string was returned", init: init.body },
+      status: init.status,
+      url: init.url,
+      method: "POST",
+      requestBody: { mode: "chunked", steps },
+      body: { error: "initialize succeeded but no media id was returned", init: init.body },
+      ms: Date.now() - started,
     };
   }
 
@@ -212,72 +275,109 @@ async function chunkedUpload(
   let segmentIndex = 0;
   for (let offset = 0; offset < input.bytes.byteLength; offset += chunkSize) {
     const chunk = input.bytes.slice(offset, offset + chunkSize);
-    const url = "https://upload.twitter.com/1.1/media/upload.json";
-    const extraParams = {
-      command: "APPEND",
-      media_id: mediaId,
-      segment_index: String(segmentIndex),
-    };
+    const extraParams = { segment_index: String(segmentIndex) };
     const form = new FormData();
-    form.set("command", "APPEND");
-    form.set("media_id", mediaId);
     form.set("segment_index", String(segmentIndex));
     form.set(
       "media",
       new Blob([toArrayBuffer(chunk)], { type: "application/octet-stream" }),
       `chunk-${segmentIndex}`,
     );
-
-    const response = await fetch(url, {
+    const append = await signedRequest({
       method: "POST",
-      headers: {
-        Authorization: signOAuth1({
-          method: "POST",
-          url,
-          credentials,
-          extraParams,
-        }),
-      },
+      url: `${MEDIA_V2}/${mediaId}/append`,
+      credentials,
+      extraParams,
       body: form,
     });
-
-    if (!response.ok) {
-      const text = await response.text();
+    steps.push({ step: "append", segment_index: segmentIndex, status: append.status, ok: append.ok });
+    if (!append.ok) {
       return {
         ok: false,
-        status: response.status,
-        url,
+        status: append.status,
+        url: append.url,
         method: "POST",
-        requestBody: extraParams,
-        body: text || { error: "APPEND failed" },
+        requestBody: { mode: "chunked", media_id: mediaId, steps },
+        body: append.body,
         ms: Date.now() - started,
       };
     }
     segmentIndex += 1;
   }
 
-  const finalized = await callXApi(
-    {
-      method: "POST",
-      host: "upload.twitter.com",
-      path: "/1.1/media/upload.json",
-      bodyType: "form",
-      body: {
-        command: "FINALIZE",
-        media_id: mediaId,
-      },
-    },
+  const finalized = await signedRequest({
+    method: "POST",
+    url: `${MEDIA_V2}/${mediaId}/finalize`,
     credentials,
-  );
+  });
+  steps.push({ step: "finalize", ...finalized });
+  if (!finalized.ok) {
+    return {
+      ok: false,
+      status: finalized.status,
+      url: finalized.url,
+      method: "POST",
+      requestBody: { mode: "chunked", media_id: mediaId, steps },
+      body: finalized.body,
+      ms: Date.now() - started,
+    };
+  }
 
+  let latest = finalized.body;
+  let info = processingInfo(latest);
+  let polls = 0;
+  while (info && info.state !== "succeeded" && info.state !== "failed" && polls < 12) {
+    const waitMs = Math.min(Math.max((info.check_after_secs ?? 1) * 1000, 500), 10_000);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    const statusUrl = `${MEDIA_V2}?command=STATUS&media_id=${encodeURIComponent(mediaId)}`;
+    const status = await signedRequest({
+      method: "GET",
+      url: statusUrl,
+      credentials,
+    });
+    steps.push({ step: "status", ...status });
+    if (!status.ok) {
+      return {
+        ok: false,
+        status: status.status,
+        url: status.url,
+        method: "GET",
+        requestBody: { mode: "chunked", media_id: mediaId, steps },
+        body: status.body,
+        ms: Date.now() - started,
+      };
+    }
+    latest = status.body;
+    info = processingInfo(latest);
+    polls += 1;
+  }
+
+  const failed = info?.state === "failed";
   return {
-    ...finalized,
+    ok: !failed,
+    status: failed ? 500 : finalized.status,
+    url: finalized.url,
+    method: "POST",
     requestBody: {
+      mode: "chunked",
+      endpoints: [
+        "POST /2/media/upload/initialize",
+        "POST /2/media/upload/{id}/append",
+        "POST /2/media/upload/{id}/finalize",
+        "GET /2/media/upload?command=STATUS",
+      ],
       media_category: input.mediaCategory,
+      media_type: input.mimeType,
       filename: input.filename,
       bytes: input.bytes.byteLength,
-      mode: "chunked",
       media_id: mediaId,
+      segments: segmentIndex,
+      steps,
+    },
+    body: {
+      media_id: mediaId,
+      processing_info: info ?? null,
+      ...(typeof latest === "object" && latest ? latest : { raw: latest }),
     },
     ms: Date.now() - started,
   };

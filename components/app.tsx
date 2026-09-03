@@ -1161,8 +1161,8 @@ function MediaSection({
 
   return (
     <Card
-      title="POST upload.twitter.com/1.1/media/upload.json"
-      hint="Images use simple upload. Videos and large files use INIT/APPEND/FINALIZE. Copy media_id_string into Send DM or Feedback-adjacent attachments."
+      title="POST /2/media/upload"
+      hint="Images use POST /2/media/upload. Videos and large files use initialize → append → finalize, then STATUS. Copy media_id into Send DM."
     >
       <div className="fields">
         <Field label="Category">
