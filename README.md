@@ -4,6 +4,8 @@ A small Next.js app for sending and inspecting **legacy X API v1.1 Direct Messag
 
 Sign in with X via **3-legged OAuth 1.0a**. Those v1.1 endpoints do not accept OAuth 2.0 user tokens.
 
+The main **Conversation** view is: pick a recipient, choose Message / NPS / CSAT, send. **Assets** holds media, profiles, and welcome messages. **Inspect** looks up IDs. **All endpoints** is the full field-by-field reference.
+
 ## What it covers
 
 | Area | Endpoints |

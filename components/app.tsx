@@ -12,16 +12,9 @@ import {
 import type { ProxyRequest, ProxyResult } from "@/lib/x-client";
 import { Button, Card, Field } from "./ui";
 
-type Section =
-  | "overview"
-  | "send"
-  | "feedback"
-  | "welcome"
-  | "rules"
-  | "profiles"
-  | "media"
-  | "inbox"
-  | "lookup";
+type Section = "conversation" | "assets" | "inspect" | "endpoints";
+
+type SendKind = "message" | "nps" | "csat";
 
 type Status = {
   configured: boolean;
@@ -30,22 +23,19 @@ type Status = {
   error?: unknown;
 };
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "send", label: "Send DM" },
-  { id: "feedback", label: "Feedback cards" },
-  { id: "welcome", label: "Welcome messages" },
-  { id: "rules", label: "Welcome rules" },
-  { id: "profiles", label: "Custom profiles" },
-  { id: "media", label: "Media upload" },
-  { id: "inbox", label: "Inbox / events" },
-  { id: "lookup", label: "User lookup" },
+const NAV: { id: Section; label: string; hint: string }[] = [
+  { id: "conversation", label: "Conversation", hint: "Send something to a person" },
+  { id: "assets", label: "Assets", hint: "Media, profiles, welcome messages" },
+  { id: "inspect", label: "Inspect", hint: "Look up IDs and responses" },
+  { id: "endpoints", label: "All endpoints", hint: "Every field on every route" },
 ];
 
 export function App() {
-  const [section, setSection] = useState<Section>("feedback");
+  const [section, setSection] = useState<Section>("conversation");
   const [status, setStatus] = useState<Status | null>(null);
   const [recipientId, setRecipientId] = useState("");
+  const [recipientHandle, setRecipientHandle] = useState("");
+  const [lastMediaId, setLastMediaId] = useState("");
   const [result, setResult] = useState<ProxyResult | { error: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -99,10 +89,21 @@ export function App() {
       <aside className="sidebar">
         <div className="brand">
           <h1>DM Test Bench</h1>
-          <p>Legacy v1.1 Direct Messages</p>
+          <p>Send as the account you sign in with</p>
         </div>
         <nav className="nav">
-          {SECTIONS.map((item) => (
+          <div className="nav-label">Workflow</div>
+          {NAV.slice(0, 3).map((item) => (
+            <button
+              key={item.id}
+              className={section === item.id ? "active" : ""}
+              onClick={() => setSection(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+          <div className="nav-label">Reference</div>
+          {NAV.slice(3).map((item) => (
             <button
               key={item.id}
               className={section === item.id ? "active" : ""}
@@ -117,51 +118,48 @@ export function App() {
       <main className="main">
         <div className="topbar">
           <div>
-            <h2>{SECTIONS.find((item) => item.id === section)?.label}</h2>
-            <p>
-              Builds real v1.1 requests so you can drop CSAT/NPS cards, quick replies, welcome
-              messages, media, and the rest into a conversation and inspect the raw response.
-            </p>
+            <h2>{NAV.find((item) => item.id === section)?.label}</h2>
+            <p>{NAV.find((item) => item.id === section)?.hint}</p>
           </div>
           <Identity status={status} />
         </div>
 
-        <div className="recipient">
-          <Field label="Recipient user ID">
-            <input
-              value={recipientId}
-              onChange={(event) => setRecipientId(event.target.value.trim())}
-              placeholder="1234567890"
-            />
-          </Field>
-          <div style={{ alignSelf: "end" }}>
-            <Button kind="ghost" onClick={() => setSection("lookup")}>
-              Look up a handle
-            </Button>
-          </div>
-        </div>
-
-        {section === "overview" && <Overview />}
-        {section === "send" && (
-          <SendSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
-        )}
-        {section === "feedback" && (
-          <FeedbackSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
-        )}
-        {section === "welcome" && <WelcomeSection busy={busy || !signedIn} onRun={run} />}
-        {section === "rules" && <RulesSection busy={busy || !signedIn} onRun={run} />}
-        {section === "profiles" && <ProfilesSection busy={busy || !signedIn} onRun={run} />}
-        {section === "media" && (
-          <MediaSection setResult={setResult} setBusy={setBusy} busy={busy || !signedIn} />
-        )}
-        {section === "inbox" && (
-          <InboxSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
-        )}
-        {section === "lookup" && (
-          <LookupSection
-            onResolved={setRecipientId}
-            busy={busy}
+        {section === "conversation" && (
+          <ConversationPage
+            status={status}
+            recipientId={recipientId}
+            setRecipientId={setRecipientId}
+            recipientHandle={recipientHandle}
+            setRecipientHandle={setRecipientHandle}
+            lastMediaId={lastMediaId}
+            busy={busy || !signedIn}
             onRun={run}
+          />
+        )}
+        {section === "assets" && (
+          <AssetsPage
+            busy={busy || !signedIn}
+            onRun={run}
+            setResult={setResult}
+            setBusy={setBusy}
+            onMediaId={setLastMediaId}
+          />
+        )}
+        {section === "inspect" && (
+          <InspectPage
+            recipientId={recipientId}
+            setRecipientId={setRecipientId}
+            busy={busy || !signedIn}
+            onRun={run}
+          />
+        )}
+        {section === "endpoints" && (
+          <EndpointsPage
+            recipientId={recipientId}
+            busy={busy || !signedIn}
+            onRun={run}
+            setResult={setResult}
+            setBusy={setBusy}
           />
         )}
       </main>
@@ -256,34 +254,288 @@ function Inspector({ result }: { result: ProxyResult | { error: string } | null 
   );
 }
 
-function Overview() {
+function ConversationPage({
+  status,
+  recipientId,
+  setRecipientId,
+  recipientHandle,
+  setRecipientHandle,
+  lastMediaId,
+  busy,
+  onRun,
+}: {
+  status: Status | null;
+  recipientId: string;
+  setRecipientId: (id: string) => void;
+  recipientHandle: string;
+  setRecipientHandle: (handle: string) => void;
+  lastMediaId: string;
+  busy: boolean;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+}) {
+  const [kind, setKind] = useState<SendKind>("nps");
+  const [looking, setLooking] = useState(false);
+
+  async function resolveHandle() {
+    const screenName = recipientHandle.replace(/^@/, "").trim();
+    if (!screenName) return;
+    setLooking(true);
+    const json = (await onRun({
+      method: "GET",
+      path: "/1.1/users/show.json",
+      query: { screen_name: screenName },
+    })) as { body?: { id_str?: string; screen_name?: string } };
+    if (typeof json?.body?.id_str === "string") {
+      setRecipientId(json.body.id_str);
+      if (json.body.screen_name) setRecipientHandle(json.body.screen_name);
+    }
+    setLooking(false);
+  }
+
+  return (
+    <div className="convo">
+      <div className="convo-bar">
+        <Field label="From">
+          <input
+            readOnly
+            value={status?.user ? `@${status.user.screenName}` : "Sign in first"}
+          />
+        </Field>
+        <div className="convo-arrow">→</div>
+        <div className="fields">
+          <Field label="To (handle or user ID)">
+            <div className="row">
+              <input
+                value={recipientHandle || recipientId}
+                onChange={(event) => {
+                  const value = event.target.value.trim().replace(/^@/, "");
+                  setRecipientHandle(value);
+                  if (/^\d+$/.test(value)) setRecipientId(value);
+                  else setRecipientId("");
+                }}
+                placeholder="sproutsocial"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void resolveHandle();
+                }}
+              />
+              <Button disabled={busy || looking || !recipientHandle} onClick={() => void resolveHandle()}>
+                Lookup
+              </Button>
+            </div>
+          </Field>
+          {recipientId ? (
+            <div className="hint">Recipient ID {recipientId}</div>
+          ) : (
+            <div className="hint">Look up a handle so we know who to message.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="types">
+        <button className={kind === "message" ? "active" : ""} onClick={() => setKind("message")}>
+          Message
+        </button>
+        <button className={kind === "nps" ? "active" : ""} onClick={() => setKind("nps")}>
+          NPS survey
+        </button>
+        <button className={kind === "csat" ? "active" : ""} onClick={() => setKind("csat")}>
+          CSAT survey
+        </button>
+      </div>
+
+      {kind === "message" && (
+        <SendSection recipientId={recipientId} lastMediaId={lastMediaId} busy={busy} onRun={onRun} />
+      )}
+      {kind === "nps" && (
+        <FeedbackCreate
+          recipientId={recipientId}
+          busy={busy}
+          onRun={onRun}
+          defaultType="nps"
+          lockType
+        />
+      )}
+      {kind === "csat" && (
+        <FeedbackCreate
+          recipientId={recipientId}
+          busy={busy}
+          onRun={onRun}
+          defaultType="csat"
+          lockType
+        />
+      )}
+
+      <Card title="In this conversation">
+        <div className="row">
+          <Button
+            disabled={busy || !recipientId}
+            onClick={() =>
+              void onRun({
+                method: "POST",
+                path: "/1.1/direct_messages/indicate_typing.json",
+                bodyType: "form",
+                body: { recipient_id: recipientId },
+              })
+            }
+          >
+            Show typing
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={() =>
+              void onRun({
+                method: "GET",
+                path: "/1.1/direct_messages/events/list.json",
+                query: { count: "20" },
+              })
+            }
+          >
+            Load recent messages
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function AssetsPage({
+  busy,
+  onRun,
+  setResult,
+  setBusy,
+  onMediaId,
+}: {
+  busy: boolean;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+  setResult: (result: ProxyResult | { error: string }) => void;
+  setBusy: (busy: boolean) => void;
+  onMediaId: (id: string) => void;
+}) {
   return (
     <div className="grid">
-      <Card title="What this covers" hint="All of the legacy v1.1 DM surfaces used for customer-service / partner testing.">
-        <ul>
-          <li>
-            <code>POST /1.1/feedback/create.json</code> — NPS and CSAT cards, every question variant
-          </li>
-          <li>Feedback show / events / submit / dismiss</li>
-          <li>
-            <code>POST /1.1/direct_messages/events/new.json</code> — text, URL previews, media, quick
-            replies, CTAs, location, custom profile
-          </li>
-          <li>Event list / show / destroy, mark read, typing indicator</li>
-          <li>Welcome messages and welcome-message rules</li>
-          <li>Custom profiles</li>
-          <li>DM media upload (image / GIF / video)</li>
-        </ul>
-      </Card>
-      <Card title="How to use it">
-        <ol>
-          <li>Set <code>X_API_KEY</code> and <code>X_API_SECRET</code> (OAuth 1.0a consumer keys).</li>
-          <li>Add callback URL <code>https://&lt;host&gt;/api/auth/callback</code> (and localhost for local).</li>
-          <li>Sign in with X — v1.1 requests are signed as that account.</li>
-          <li>Put the recipient’s numeric user ID in the bar above (or look up a handle).</li>
-          <li>Send a CSAT card as the control, then an NPS card to reproduce the XChat fallback.</li>
-        </ol>
-      </Card>
+      <MediaSection
+        busy={busy}
+        setBusy={setBusy}
+        setResult={(result) => {
+          setResult(result);
+          if ("body" in result && result.body && typeof result.body === "object") {
+            const mediaId = (result.body as { media_id?: string }).media_id;
+            if (mediaId) onMediaId(mediaId);
+          }
+        }}
+      />
+      <ProfilesSection busy={busy} onRun={onRun} />
+      <WelcomeSection busy={busy} onRun={onRun} />
+      <RulesSection busy={busy} onRun={onRun} />
+    </div>
+  );
+}
+
+function InspectPage({
+  recipientId,
+  setRecipientId,
+  busy,
+  onRun,
+}: {
+  recipientId: string;
+  setRecipientId: (id: string) => void;
+  busy: boolean;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+}) {
+  return (
+    <div className="grid">
+      <LookupSection onResolved={setRecipientId} busy={busy} onRun={onRun} />
+      <FeedbackInspect recipientId={recipientId} busy={busy} onRun={onRun} />
+      <InboxSection recipientId={recipientId} busy={busy} onRun={onRun} />
+    </div>
+  );
+}
+
+function EndpointsPage({
+  recipientId,
+  busy,
+  onRun,
+  setResult,
+  setBusy,
+}: {
+  recipientId: string;
+  busy: boolean;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+  setResult: (result: ProxyResult | { error: string }) => void;
+  setBusy: (busy: boolean) => void;
+}) {
+  return (
+    <div className="grid">
+      <p className="hint">
+        Full field coverage for each route. Use Conversation when you just want to send something.
+      </p>
+      <details className="endpoint" open>
+        <summary>
+          <span className="method">POST</span>
+          <span>Create feedback card</span>
+          <code>/1.1/feedback/create.json</code>
+        </summary>
+        <FeedbackCreate recipientId={recipientId} busy={busy} onRun={onRun} defaultType="nps" />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method get">GET</span>
+          <span>Feedback show / events / submit / dismiss</span>
+        </summary>
+        <FeedbackInspect recipientId={recipientId} busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method">POST</span>
+          <span>Send message</span>
+          <code>/1.1/direct_messages/events/new.json</code>
+        </summary>
+        <SendSection recipientId={recipientId} lastMediaId="" busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method get">GET</span>
+          <span>Inbox events, mark read, typing</span>
+        </summary>
+        <InboxSection recipientId={recipientId} busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method">POST</span>
+          <span>Welcome messages</span>
+        </summary>
+        <WelcomeSection busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method">POST</span>
+          <span>Welcome rules</span>
+        </summary>
+        <RulesSection busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method">POST</span>
+          <span>Custom profiles</span>
+        </summary>
+        <ProfilesSection busy={busy} onRun={onRun} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method">POST</span>
+          <span>Media upload</span>
+          <code>/2/media/upload</code>
+        </summary>
+        <MediaSection busy={busy} setBusy={setBusy} setResult={setResult} />
+      </details>
+      <details className="endpoint">
+        <summary>
+          <span className="method get">GET</span>
+          <span>User lookup</span>
+          <code>/1.1/users/show.json</code>
+        </summary>
+        <LookupSection onResolved={() => undefined} busy={busy} onRun={onRun} />
+      </details>
     </div>
   );
 }
@@ -538,12 +790,14 @@ function applyPreset(name: string): MessageDraft {
 
 function SendSection({
   recipientId,
+  lastMediaId,
   busy,
   onRun,
 }: {
   recipientId: string;
+  lastMediaId?: string;
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState<MessageDraft>(applyPreset("text"));
 
@@ -570,30 +824,33 @@ function SendSection({
 
   return (
     <div className="grid">
-      <Card title="Presets" hint="Fills the composer. Media presets still need a media id from the Media tab.">
-        <div className="row">
+      <Card title="Compose a message">
+        <div className="starters" style={{ marginBottom: 12 }}>
           {[
             ["text", "Plain text"],
             ["url", "URL preview"],
-            ["media", "Image / media"],
-            ["qr3", "Quick replies (3)"],
-            ["qr20", "Quick replies (20)"],
+            ["media", "Media"],
+            ["qr3", "Quick replies"],
             ["cta", "Buttons"],
             ["qr+cta", "QR + buttons"],
-            ["media+qr", "Media + QR"],
-            ["location", "Location pin"],
+            ["location", "Location"],
           ].map(([id, label]) => (
             <Button key={id} onClick={() => setDraft(applyPreset(id))}>
               {label}
             </Button>
           ))}
         </div>
-      </Card>
-      <Card title="POST /1.1/direct_messages/events/new.json">
         <MessageComposer draft={draft} setDraft={setDraft} />
+        {lastMediaId && draft.attachmentKind === "media" && !draft.mediaId ? (
+          <div className="actions">
+            <Button onClick={() => setDraft({ ...draft, mediaId: lastMediaId })}>
+              Use last upload {lastMediaId}
+            </Button>
+          </div>
+        ) : null}
         <div className="actions">
           <Button kind="primary" disabled={busy || !recipientId} onClick={send}>
-            Send DM
+            Send message
           </Button>
         </div>
       </Card>
@@ -601,28 +858,36 @@ function SendSection({
   );
 }
 
-function FeedbackSection({
+function FeedbackCreate({
   recipientId,
   busy,
   onRun,
+  defaultType,
+  lockType = false,
 }: {
   recipientId: string;
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+  defaultType: "nps" | "csat";
+  lockType?: boolean;
 }) {
-  const [type, setType] = useState<"nps" | "csat">("nps");
-  const [message, setMessage] = useState("Sending Customer Feedback survey");
+  const [type, setType] = useState<"nps" | "csat">(defaultType);
+  const [message, setMessage] = useState(
+    defaultType === "csat" ? "Sending CSAT control survey" : "Sending Customer Feedback survey",
+  );
   const [privacyUrl, setPrivacyUrl] = useState("https://x.com/privacy");
   const [displayName, setDisplayName] = useState("Test Bench");
   const [externalId, setExternalId] = useState("");
   const [variantId, setVariantId] = useState(0);
   const [test, setTest] = useState(true);
-  const [feedbackId, setFeedbackId] = useState("");
-  const [score, setScore] = useState("");
-  const [comment, setComment] = useState("");
-  const [fromTime, setFromTime] = useState(() => String(Date.now() - 7 * 24 * 60 * 60 * 1000));
-  const [toTime, setToTime] = useState(() => String(Date.now()));
-  const [cursor, setCursor] = useState("");
+
+  useEffect(() => {
+    setType(defaultType);
+    setMessage(
+      defaultType === "csat" ? "Sending CSAT control survey" : "Sending Customer Feedback survey",
+    );
+    setVariantId(0);
+  }, [defaultType]);
 
   const variants = type === "nps" ? NPS_VARIANTS : CSAT_VARIANTS;
   const preview = useMemo(
@@ -649,13 +914,17 @@ function FeedbackSection({
   }
 
   return (
-    <div className="grid">
-      <Card
-        title="POST /1.1/feedback/create.json"
-        hint="NPS is the broken XChat path. CSAT is the working control. test=true keeps it out of analytics."
-      >
+    <Card
+      title={type === "nps" ? "Send an NPS survey" : "Send a CSAT survey"}
+      hint={
+        type === "nps"
+          ? "This is the XChat bug path — the recipient often sees a raw card ID."
+          : "Working control. Same account, same conversation, rendered card."
+      }
+    >
         <div className="fields">
-          <div className="grid two">
+          <div className={lockType ? "fields" : "grid two"}>
+            {lockType ? null : (
             <Field label="Type">
               <select
                 value={type}
@@ -668,6 +937,7 @@ function FeedbackSection({
                 <option value="csat">csat</option>
               </select>
             </Field>
+            )}
             <Field label="Question variant">
               <select
                 value={variantId}
@@ -705,33 +975,33 @@ function FeedbackSection({
         </div>
         <div className="actions">
           <Button kind="primary" disabled={busy || !recipientId} onClick={create}>
-            Create {type.toUpperCase()} card
-          </Button>
-          <Button
-            disabled={busy || !recipientId}
-            onClick={() => {
-              setType("csat");
-              setVariantId(0);
-              setMessage("Sending CSAT control survey");
-            }}
-          >
-            Fill CSAT control
-          </Button>
-          <Button
-            disabled={busy || !recipientId}
-            onClick={() => {
-              setType("nps");
-              setVariantId(0);
-              setMessage("Sending Customer Feedback survey");
-            }}
-          >
-            Fill NPS repro
+            Send {type.toUpperCase()} survey
           </Button>
         </div>
       </Card>
+  );
+}
 
+function FeedbackInspect({
+  recipientId: _recipientId,
+  busy,
+  onRun,
+}: {
+  recipientId: string;
+  busy: boolean;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
+}) {
+  const [feedbackId, setFeedbackId] = useState("");
+  const [score, setScore] = useState("");
+  const [comment, setComment] = useState("");
+  const [fromTime, setFromTime] = useState(() => String(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  const [toTime, setToTime] = useState(() => String(Date.now()));
+  const [cursor, setCursor] = useState("");
+
+  return (
+    <div className="grid">
       <div className="grid two">
-        <Card title="GET /1.1/feedback/show/:id.json">
+        <Card title="Look up a feedback card">
           <div className="fields">
             <Field label="Feedback ID">
               <input value={feedbackId} onChange={(event) => setFeedbackId(event.target.value)} />
@@ -752,7 +1022,7 @@ function FeedbackSection({
           </div>
         </Card>
 
-        <Card title="POST /1.1/feedback/submit/:id.json" hint="Must be called as the recipient. NPS score 0–10, CSAT 1–5.">
+        <Card title="Submit or dismiss as the recipient" hint="Must be called while signed in as the recipient. NPS 0–10, CSAT 1–5.">
           <div className="fields">
             <Field label="Feedback ID">
               <input value={feedbackId} onChange={(event) => setFeedbackId(event.target.value)} />
@@ -795,7 +1065,7 @@ function FeedbackSection({
         </Card>
       </div>
 
-      <Card title="GET /1.1/feedback/events.json" hint="First page needs from_time + to_time in milliseconds. Later pages use cursor only.">
+      <Card title="Feedback events for this sender" hint="First page needs from_time + to_time in milliseconds. Later pages use cursor only.">
         <div className="grid two">
           <Field label="from_time (ms)">
             <input value={fromTime} onChange={(event) => setFromTime(event.target.value)} />
@@ -833,7 +1103,7 @@ function WelcomeSection({
   onRun,
 }: {
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
 }) {
   const [name, setName] = useState("dm-test welcome");
   const [welcomeId, setWelcomeId] = useState("");
@@ -845,7 +1115,7 @@ function WelcomeSection({
 
   return (
     <div className="grid">
-      <Card title="POST /1.1/direct_messages/welcome_messages/new.json">
+      <Card title="Welcome message" hint="Shown when someone opens a new DM with this account.">
         <div className="fields">
           <Field label="Name">
             <input value={name} onChange={(event) => setName(event.target.value)} />
@@ -875,7 +1145,7 @@ function WelcomeSection({
         </div>
       </Card>
       <div className="grid two">
-        <Card title="GET show / PUT update / DELETE destroy">
+        <Card title="Update or delete a welcome message">
           <Field label="Welcome message ID">
             <input value={welcomeId} onChange={(event) => setWelcomeId(event.target.value)} />
           </Field>
@@ -920,7 +1190,7 @@ function WelcomeSection({
             </Button>
           </div>
         </Card>
-        <Card title="GET /1.1/direct_messages/welcome_messages/list.json">
+        <Card title="List welcome messages">
           <Field label="cursor">
             <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
           </Field>
@@ -949,7 +1219,7 @@ function RulesSection({
   onRun,
 }: {
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
 }) {
   const [welcomeMessageId, setWelcomeMessageId] = useState("");
   const [ruleId, setRuleId] = useState("");
@@ -958,8 +1228,8 @@ function RulesSection({
   return (
     <div className="grid two">
       <Card
-        title="POST /1.1/direct_messages/welcome_messages/rules/new.json"
-        hint="Most recently created rule becomes the default welcome message."
+        title="Set default welcome"
+        hint="The newest rule is the one people see when they open a new conversation."
       >
         <Field label="Welcome message ID">
           <input
@@ -984,7 +1254,7 @@ function RulesSection({
           </Button>
         </div>
       </Card>
-      <Card title="Show / list / destroy">
+      <Card title="Manage welcome rules">
         <Field label="Rule ID">
           <input value={ruleId} onChange={(event) => setRuleId(event.target.value)} />
         </Field>
@@ -1039,7 +1309,7 @@ function ProfilesSection({
   onRun,
 }: {
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
 }) {
   const [name, setName] = useState("Support Agent");
   const [mediaId, setMediaId] = useState("");
@@ -1049,8 +1319,8 @@ function ProfilesSection({
   return (
     <div className="grid two">
       <Card
-        title="POST /1.1/custom_profiles/new.json"
-        hint="Account must be allowlisted for custom profiles. Upload an avatar on the Media tab first."
+        title="Custom profile"
+        hint="Needs custom-profile allowlisting. Upload an avatar in Assets first."
       >
         <div className="fields">
           <Field label="Name">
@@ -1082,7 +1352,7 @@ function ProfilesSection({
           </Button>
         </div>
       </Card>
-      <Card title="GET /:id · list · destroy">
+      <Card title="Manage custom profiles">
         <Field label="Custom profile ID">
           <input value={profileId} onChange={(event) => setProfileId(event.target.value)} />
         </Field>
@@ -1161,8 +1431,8 @@ function MediaSection({
 
   return (
     <Card
-      title="POST /2/media/upload"
-      hint="Images use POST /2/media/upload. Videos and large files use initialize → append → finalize, then STATUS. Copy media_id into Send DM."
+      title="Upload media"
+      hint="Images go to POST /2/media/upload. Videos use initialize → append → finalize. The media ID is reused when you send a message."
     >
       <div className="fields">
         <Field label="Category">
@@ -1195,7 +1465,7 @@ function InboxSection({
 }: {
   recipientId: string;
   busy: boolean;
-  onRun: (request: ProxyRequest) => Promise<void>;
+  onRun: (request: ProxyRequest) => Promise<unknown>;
 }) {
   const [eventId, setEventId] = useState("");
   const [cursor, setCursor] = useState("");
