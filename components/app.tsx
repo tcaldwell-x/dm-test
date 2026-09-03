@@ -10,7 +10,7 @@ import {
   type QuickReplyOption,
 } from "@/lib/message-data";
 import type { ProxyRequest, ProxyResult } from "@/lib/x-client";
-import { Button, Card, Field } from "./ui";
+import { Button, Card, Field, Icon, Method } from "./ui";
 
 type Section = "conversation" | "assets" | "inspect" | "endpoints";
 
@@ -23,11 +23,13 @@ type Status = {
   error?: unknown;
 };
 
-const NAV: { id: Section; label: string; hint: string }[] = [
-  { id: "conversation", label: "Conversation", hint: "Send something to a person" },
-  { id: "assets", label: "Assets", hint: "Media, profiles, welcome messages" },
-  { id: "inspect", label: "Inspect", hint: "Look up IDs and responses" },
-  { id: "endpoints", label: "All endpoints", hint: "Every field on every route" },
+type NavIcon = "chat" | "box" | "search" | "list";
+
+const NAV: { id: Section; label: string; hint: string; icon: NavIcon }[] = [
+  { id: "conversation", label: "Conversation", hint: "Send a message or survey to a person", icon: "chat" },
+  { id: "assets", label: "Assets", hint: "Media, custom profiles, welcome messages", icon: "box" },
+  { id: "inspect", label: "Inspect", hint: "Look up users, feedback, and inbox events", icon: "search" },
+  { id: "endpoints", label: "All endpoints", hint: "Every field on every route", icon: "list" },
 ];
 
 export function App() {
@@ -88,31 +90,27 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <h1>DM Test Bench</h1>
-          <p>Send as the account you sign in with</p>
+          <div className="brand-mark">
+            <Icon name="chat" />
+          </div>
+          <div>
+            <h1>DM Test Bench</h1>
+            <p>Legacy v1.1 Direct Messages</p>
+          </div>
         </div>
         <nav className="nav">
           <div className="nav-label">Workflow</div>
           {NAV.slice(0, 3).map((item) => (
-            <button
-              key={item.id}
-              className={section === item.id ? "active" : ""}
-              onClick={() => setSection(item.id)}
-            >
-              {item.label}
-            </button>
+            <NavButton key={item.id} item={item} active={section === item.id} onSelect={setSection} />
           ))}
           <div className="nav-label">Reference</div>
           {NAV.slice(3).map((item) => (
-            <button
-              key={item.id}
-              className={section === item.id ? "active" : ""}
-              onClick={() => setSection(item.id)}
-            >
-              {item.label}
-            </button>
+            <NavButton key={item.id} item={item} active={section === item.id} onSelect={setSection} />
           ))}
         </nav>
+        <div className="sidebar-foot">
+          Requests are signed server-side with OAuth 1.0a as the signed-in account.
+        </div>
       </aside>
 
       <main className="main">
@@ -165,32 +163,52 @@ export function App() {
       </main>
 
       <aside className="inspector">
-        <Inspector result={result} />
+        <Inspector result={result} busy={busy} />
       </aside>
     </div>
   );
 }
 
+function NavButton({
+  item,
+  active,
+  onSelect,
+}: {
+  item: (typeof NAV)[number];
+  active: boolean;
+  onSelect: (section: Section) => void;
+}) {
+  return (
+    <button className={active ? "active" : ""} onClick={() => onSelect(item.id)}>
+      <Icon name={item.icon} />
+      <span>{item.label}</span>
+    </button>
+  );
+}
+
 function Identity({ status }: { status: Status | null }) {
-  if (!status) return <div className="identity">Checking sign-in…</div>;
+  if (!status) {
+    return (
+      <div className="identity plain">
+        <span className="dot" />
+        <span className="hint">Checking sign-in…</span>
+      </div>
+    );
+  }
   if (!status.configured) {
     return (
       <div className="identity">
+        <span className="dot bad" />
         <div>
           <div className="who">OAuth app not configured</div>
-          <div className="meta">Set X_API_KEY and X_API_SECRET</div>
+          <div className="meta">X_API_KEY · X_API_SECRET</div>
         </div>
-        <span className="pill bad">offline</span>
       </div>
     );
   }
   if (!status.user) {
     return (
-      <div className="identity">
-        <div>
-          <div className="who">Not signed in</div>
-          <div className="meta">DMs send as the account you authorize</div>
-        </div>
+      <div className="identity plain">
         <a className="btn primary" href="/api/auth/login">
           Sign in with X
         </a>
@@ -198,13 +216,17 @@ function Identity({ status }: { status: Status | null }) {
     );
   }
   return (
-    <div className="identity">
-      {status.user.avatar ? <img src={status.user.avatar} alt="" /> : null}
+    <div className="identity" title={`Sending as @${status.user.screenName}`}>
+      {status.user.avatar ? (
+        <img src={status.user.avatar} alt="" />
+      ) : (
+        <span className="avatar-fallback" />
+      )}
       <div>
         <div className="who">@{status.user.screenName}</div>
         <div className="meta">{status.user.id}</div>
       </div>
-      <span className="pill ok">sending as</span>
+      <span className="dot ok" />
       <Button
         kind="ghost"
         onClick={() => {
@@ -219,37 +241,108 @@ function Identity({ status }: { status: Status | null }) {
   );
 }
 
-function Inspector({ result }: { result: ProxyResult | { error: string } | null }) {
+function statusTone(status: number): "ok" | "warn" | "bad" | "" {
+  if (!status) return "";
+  if (status < 300) return "ok";
+  if (status < 500) return "warn";
+  return "bad";
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      kind="ghost"
+      size="sm"
+      title="Copy to clipboard"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
+function JsonBlock({ label, value, error }: { label: string; value: unknown; error?: boolean }) {
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return (
+    <div className="block">
+      <div className="block-head">
+        <span>{label}</span>
+        <CopyButton text={text ?? ""} />
+      </div>
+      <pre className={error ? (typeof value === "string" ? "error plain" : "error") : ""}>{text}</pre>
+    </div>
+  );
+}
+
+function Inspector({ result, busy }: { result: ProxyResult | { error: string } | null; busy: boolean }) {
   if (!result) {
     return (
       <>
-        <h3>Inspector</h3>
-        <p className="hint">Run any action to see the signed request URL and API response here.</p>
+        <div className="inspector-head">
+          <h3>Inspector</h3>
+        </div>
+        <div className="inspector-body">
+          <div className="inspector-empty">
+            <Icon name="pulse" />
+            <div>
+              Run any action and the signed request URL, body, and raw API response show up here.
+            </div>
+          </div>
+        </div>
       </>
     );
   }
   if ("error" in result && !("status" in result)) {
     return (
       <>
-        <h3>Inspector</h3>
-        <pre>{result.error}</pre>
+        <div className="inspector-head">
+          <h3>Inspector</h3>
+          {busy ? <span className="pill">working…</span> : null}
+        </div>
+        <div className="inspector-body">
+          <JsonBlock label="Error" value={result.error} error />
+        </div>
       </>
     );
   }
   const proxy = result as ProxyResult;
+  const url = (() => {
+    try {
+      const parsed = new URL(proxy.url);
+      return { host: parsed.host, path: parsed.pathname + parsed.search };
+    } catch {
+      return { host: "", path: proxy.url };
+    }
+  })();
+  const tone = statusTone(proxy.status);
   return (
     <>
-      <h3>Request</h3>
-      <div className="status-line">
-        <span>
-          {proxy.method} {proxy.status ? `→ ${proxy.status}` : ""}
-        </span>
-        <span>{proxy.ms}ms</span>
+      <div className="inspector-head">
+        <h3>Inspector</h3>
+        {busy ? <span className="pill">working…</span> : null}
       </div>
-      <pre>{proxy.url}</pre>
-      {proxy.requestBody ? <pre>{JSON.stringify(proxy.requestBody, null, 2)}</pre> : null}
-      <h3>Response</h3>
-      <pre>{JSON.stringify(proxy.body, null, 2)}</pre>
+      <div className="inspector-body">
+        <div className="block">
+          <div className="status-row">
+            <Method verb={proxy.method as "GET" | "POST" | "PUT" | "DELETE"} />
+            <span className={`status-code ${tone}`}>{proxy.status || "—"}</span>
+            <span />
+            <span className="ms">{proxy.ms} ms</span>
+          </div>
+          <div className="url-line">
+            {url.host ? <span>{url.host}</span> : null}
+            <span className="path">{url.path}</span>
+          </div>
+        </div>
+        {proxy.requestBody ? <JsonBlock label="Request body" value={proxy.requestBody} /> : null}
+        <JsonBlock label="Response" value={proxy.body} error={tone === "bad" || tone === "warn"} />
+      </div>
     </>
   );
 }
@@ -292,6 +385,8 @@ function ConversationPage({
     setLooking(false);
   }
 
+  const toIsNumeric = /^\d+$/.test(recipientHandle || recipientId);
+
   return (
     <div className="convo">
       <div className="convo-bar">
@@ -301,10 +396,12 @@ function ConversationPage({
             value={status?.user ? `@${status.user.screenName}` : "Sign in first"}
           />
         </Field>
-        <div className="convo-arrow">→</div>
-        <div className="fields">
-          <Field label="To (handle or user ID)">
-            <div className="row">
+        <div className="convo-arrow">
+          <Icon name="arrow" />
+        </div>
+        <div>
+          <Field label="To">
+            <div className="row" style={{ flexWrap: "nowrap" }}>
               <input
                 value={recipientHandle || recipientId}
                 onChange={(event) => {
@@ -313,33 +410,38 @@ function ConversationPage({
                   if (/^\d+$/.test(value)) setRecipientId(value);
                   else setRecipientId("");
                 }}
-                placeholder="sproutsocial"
+                placeholder="@handle or user ID"
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void resolveHandle();
                 }}
               />
-              <Button disabled={busy || looking || !recipientHandle} onClick={() => void resolveHandle()}>
-                Lookup
+              <Button
+                disabled={busy || looking || !recipientHandle || toIsNumeric}
+                onClick={() => void resolveHandle()}
+              >
+                {looking ? "Looking up…" : "Look up"}
               </Button>
             </div>
           </Field>
           {recipientId ? (
-            <div className="hint">Recipient ID {recipientId}</div>
+            <div className="hint">
+              Resolved to <code>{recipientId}</code>
+            </div>
           ) : (
-            <div className="hint">Look up a handle so we know who to message.</div>
+            <div className="hint">Enter a handle and press Enter to resolve it to a user ID.</div>
           )}
         </div>
       </div>
 
-      <div className="types">
-        <button className={kind === "message" ? "active" : ""} onClick={() => setKind("message")}>
-          Message
-        </button>
+      <div className="types" role="tablist">
         <button className={kind === "nps" ? "active" : ""} onClick={() => setKind("nps")}>
           NPS survey
         </button>
         <button className={kind === "csat" ? "active" : ""} onClick={() => setKind("csat")}>
           CSAT survey
+        </button>
+        <button className={kind === "message" ? "active" : ""} onClick={() => setKind("message")}>
+          Message
         </button>
       </div>
 
@@ -365,7 +467,7 @@ function ConversationPage({
         />
       )}
 
-      <Card title="In this conversation">
+      <Card title="In this conversation" hint="Typing indicator and the most recent inbox events for the signed-in account.">
         <div className="row">
           <Button
             disabled={busy || !recipientId}
@@ -466,12 +568,13 @@ function EndpointsPage({
 }) {
   return (
     <div className="grid">
-      <p className="hint">
+      <p className="section-intro">
         Full field coverage for each route. Use Conversation when you just want to send something.
       </p>
       <details className="endpoint" open>
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Create feedback card</span>
           <code>/1.1/feedback/create.json</code>
         </summary>
@@ -479,14 +582,16 @@ function EndpointsPage({
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method get">GET</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="GET" />
           <span>Feedback show / events / submit / dismiss</span>
         </summary>
         <FeedbackInspect recipientId={recipientId} busy={busy} onRun={onRun} />
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Send message</span>
           <code>/1.1/direct_messages/events/new.json</code>
         </summary>
@@ -494,35 +599,40 @@ function EndpointsPage({
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method get">GET</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="GET" />
           <span>Inbox events, mark read, typing</span>
         </summary>
         <InboxSection recipientId={recipientId} busy={busy} onRun={onRun} />
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Welcome messages</span>
         </summary>
         <WelcomeSection busy={busy} onRun={onRun} />
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Welcome rules</span>
         </summary>
         <RulesSection busy={busy} onRun={onRun} />
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Custom profiles</span>
         </summary>
         <ProfilesSection busy={busy} onRun={onRun} />
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method">POST</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="POST" />
           <span>Media upload</span>
           <code>/2/media/upload</code>
         </summary>
@@ -530,7 +640,8 @@ function EndpointsPage({
       </details>
       <details className="endpoint">
         <summary>
-          <span className="method get">GET</span>
+          <Icon name="chevron" className="chev" />
+          <Method verb="GET" />
           <span>User lookup</span>
           <code>/1.1/users/show.json</code>
         </summary>
@@ -617,10 +728,15 @@ function MessageComposer({
       )}
 
       <div>
-        <div className="row" style={{ marginBottom: 8 }}>
-          <strong>Quick replies</strong>
+        <div className="subhead">
+          <span>
+            <strong>Quick replies</strong>
+            <span className="count">{draft.quickReplies.length}/20</span>
+          </span>
           <Button
             kind="ghost"
+            size="sm"
+            disabled={draft.quickReplies.length >= 20}
             onClick={() =>
               patch({
                 quickReplies: [
@@ -630,13 +746,16 @@ function MessageComposer({
               })
             }
           >
-            Add option
+            <Icon name="plus" className="ico" /> Add option
           </Button>
         </div>
         <div className="list">
+          {draft.quickReplies.length === 0 ? (
+            <div className="empty">No quick replies. The message sends as plain text.</div>
+          ) : null}
           {draft.quickReplies.map((option, index) => (
             <div className="item" key={index}>
-              <div className="grid two">
+              <div className="grid three">
                 <input
                   placeholder="Label"
                   value={option.label}
@@ -667,11 +786,13 @@ function MessageComposer({
               </div>
               <Button
                 kind="ghost"
+                size="sm"
+                title="Remove option"
                 onClick={() =>
                   patch({ quickReplies: draft.quickReplies.filter((_, i) => i !== index) })
                 }
               >
-                Remove
+                <Icon name="x" className="ico" />
               </Button>
             </div>
           ))}
@@ -679,16 +800,24 @@ function MessageComposer({
       </div>
 
       <div>
-        <div className="row" style={{ marginBottom: 8 }}>
-          <strong>Buttons (CTAs)</strong>
+        <div className="subhead">
+          <span>
+            <strong>Buttons</strong>
+            <span className="count">{draft.ctas.length}/3</span>
+          </span>
           <Button
             kind="ghost"
+            size="sm"
+            disabled={draft.ctas.length >= 3}
             onClick={() => patch({ ctas: [...draft.ctas, { label: "", url: "" }] })}
           >
-            Add button
+            <Icon name="plus" className="ico" /> Add button
           </Button>
         </div>
         <div className="list">
+          {draft.ctas.length === 0 ? (
+            <div className="empty">No call-to-action buttons.</div>
+          ) : null}
           {draft.ctas.map((cta, index) => (
             <div className="item" key={index}>
               <div className="grid two">
@@ -713,9 +842,11 @@ function MessageComposer({
               </div>
               <Button
                 kind="ghost"
+                size="sm"
+                title="Remove button"
                 onClick={() => patch({ ctas: draft.ctas.filter((_, i) => i !== index) })}
               >
-                Remove
+                <Icon name="x" className="ico" />
               </Button>
             </div>
           ))}
@@ -824,8 +955,11 @@ function SendSection({
 
   return (
     <div className="grid">
-      <Card title="Compose a message">
-        <div className="starters" style={{ marginBottom: 12 }}>
+      <Card title="Compose a message" hint="Text, web previews, media, quick replies, buttons, and location on POST direct_messages/events/new.">
+        <div className="subhead">
+          <strong>Start from</strong>
+        </div>
+        <div className="starters" style={{ marginBottom: 16 }}>
           {[
             ["text", "Plain text"],
             ["url", "URL preview"],
@@ -842,16 +976,17 @@ function SendSection({
         </div>
         <MessageComposer draft={draft} setDraft={setDraft} />
         {lastMediaId && draft.attachmentKind === "media" && !draft.mediaId ? (
-          <div className="actions">
-            <Button onClick={() => setDraft({ ...draft, mediaId: lastMediaId })}>
-              Use last upload {lastMediaId}
+          <div className="actions bare">
+            <Button size="sm" onClick={() => setDraft({ ...draft, mediaId: lastMediaId })}>
+              Use last upload <code>{lastMediaId}</code>
             </Button>
           </div>
         ) : null}
         <div className="actions">
           <Button kind="primary" disabled={busy || !recipientId} onClick={send}>
-            Send message
+            <Icon name="send" className="ico" /> Send message
           </Button>
+          {!recipientId ? <span className="hint">Choose a recipient first.</span> : null}
         </div>
       </Card>
     </div>
@@ -918,9 +1053,10 @@ function FeedbackCreate({
       title={type === "nps" ? "Send an NPS survey" : "Send a CSAT survey"}
       hint={
         type === "nps"
-          ? "This is the XChat bug path — the recipient often sees a raw card ID."
-          : "Working control. Same account, same conversation, rendered card."
+          ? "Creates a feedback_nps card and DMs it. In XChat the recipient may see a raw card ID instead of the survey."
+          : "Creates a feedback_csat card and DMs it. Renders correctly in XChat; use as the control."
       }
+      aside={<span className={`pill ${type === "nps" ? "warn" : "ok"}`}>{type === "nps" ? "bug path" : "control"}</span>}
     >
         <div className="fields">
           <div className={lockType ? "fields" : "grid two"}>
@@ -971,12 +1107,15 @@ function FeedbackCreate({
               </select>
             </Field>
           </div>
-          <div className="preview">Card question: {preview}</div>
+          <div className="preview">
+            Card question · <strong>{preview}</strong>
+          </div>
         </div>
         <div className="actions">
           <Button kind="primary" disabled={busy || !recipientId} onClick={create}>
-            Send {type.toUpperCase()} survey
+            <Icon name="send" className="ico" /> Send {type.toUpperCase()} survey
           </Button>
+          {!recipientId ? <span className="hint">Choose a recipient first.</span> : null}
         </div>
       </Card>
   );
@@ -1073,7 +1212,7 @@ function FeedbackInspect({
           <Field label="to_time (ms)">
             <input value={toTime} onChange={(event) => setToTime(event.target.value)} />
           </Field>
-          <Field label="cursor">
+          <Field label="Cursor">
             <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
           </Field>
         </div>
@@ -1177,6 +1316,7 @@ function WelcomeSection({
               Update from composer
             </Button>
             <Button
+            kind="danger"
               disabled={busy || !welcomeId}
               onClick={() =>
                 void onRun({
@@ -1191,7 +1331,7 @@ function WelcomeSection({
           </div>
         </Card>
         <Card title="List welcome messages">
-          <Field label="cursor">
+          <Field label="Cursor">
             <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
           </Field>
           <div className="actions">
@@ -1258,7 +1398,7 @@ function RulesSection({
         <Field label="Rule ID">
           <input value={ruleId} onChange={(event) => setRuleId(event.target.value)} />
         </Field>
-        <Field label="cursor">
+        <Field label="Cursor">
           <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
         </Field>
         <div className="actions">
@@ -1287,6 +1427,7 @@ function RulesSection({
             List
           </Button>
           <Button
+            kind="danger"
             disabled={busy || !ruleId}
             onClick={() =>
               void onRun({
@@ -1356,7 +1497,7 @@ function ProfilesSection({
         <Field label="Custom profile ID">
           <input value={profileId} onChange={(event) => setProfileId(event.target.value)} />
         </Field>
-        <Field label="cursor">
+        <Field label="Cursor">
           <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
         </Field>
         <div className="actions">
@@ -1384,6 +1525,7 @@ function ProfilesSection({
             List
           </Button>
           <Button
+            kind="danger"
             disabled={busy || !profileId}
             onClick={() =>
               void onRun({
@@ -1472,8 +1614,8 @@ function InboxSection({
 
   return (
     <div className="grid two">
-      <Card title="GET /1.1/direct_messages/events/list.json">
-        <Field label="cursor">
+      <Card title="List inbox events" hint="GET /1.1/direct_messages/events/list.json">
+        <Field label="Cursor">
           <input value={cursor} onChange={(event) => setCursor(event.target.value)} />
         </Field>
         <div className="actions">
@@ -1491,7 +1633,7 @@ function InboxSection({
           </Button>
         </div>
       </Card>
-      <Card title="Show / destroy event">
+      <Card title="Show or destroy an event" hint="GET events/show.json · DELETE events/destroy.json">
         <Field label="Event ID">
           <input value={eventId} onChange={(event) => setEventId(event.target.value)} />
         </Field>
@@ -1509,6 +1651,7 @@ function InboxSection({
             Show
           </Button>
           <Button
+            kind="danger"
             disabled={busy || !eventId}
             onClick={() =>
               void onRun({
@@ -1522,7 +1665,7 @@ function InboxSection({
           </Button>
         </div>
       </Card>
-      <Card title="POST /1.1/direct_messages/mark_read.json">
+      <Card title="Mark read" hint="POST /1.1/direct_messages/mark_read.json — needs a recipient and an event ID.">
         <div className="actions">
           <Button
             disabled={busy || !recipientId || !eventId}
@@ -1539,7 +1682,7 @@ function InboxSection({
           </Button>
         </div>
       </Card>
-      <Card title="POST /1.1/direct_messages/indicate_typing.json">
+      <Card title="Typing indicator" hint="POST /1.1/direct_messages/indicate_typing.json">
         <div className="actions">
           <Button
             disabled={busy || !recipientId}
@@ -1582,7 +1725,7 @@ function LookupSection({
   }
 
   return (
-    <Card title="GET /1.1/users/show.json" hint="Resolves a handle to a numeric user ID and stores it as the recipient.">
+    <Card title="Look up a user" hint="GET /1.1/users/show.json — resolves a handle to a numeric user ID and stores it as the recipient.">
       <Field label="Handle">
         <input
           value={handle}
