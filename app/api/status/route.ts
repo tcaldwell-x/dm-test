@@ -1,57 +1,25 @@
 import { NextResponse } from "next/server";
-import { getCredentials } from "@/lib/oauth";
-import { callXApi } from "@/lib/x-client";
+import { applySessionCookie, getLiveSession } from "@/lib/auth";
+import { getOAuthConfig } from "@/lib/oauth2";
 
 export async function GET() {
-  const credentials = getCredentials();
-  if (!credentials) {
+  const config = getOAuthConfig();
+  if (!config) {
     return NextResponse.json({
       configured: false,
+      signedIn: false,
       user: null,
-      error: "Missing X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, or X_ACCESS_TOKEN_SECRET.",
+      error: "Missing X_CLIENT_ID. Add OAuth 2.0 client credentials to the environment.",
     });
   }
 
-  try {
-    const result = await callXApi({
-      method: "GET",
-      path: "/1.1/account/verify_credentials.json",
-      query: { skip_status: "true", include_entities: "false" },
-    });
-
-    if (!result.ok) {
-      return NextResponse.json({
-        configured: true,
-        user: null,
-        error: result.body,
-        status: result.status,
-      });
-    }
-
-    const user = result.body as {
-      id_str?: string;
-      screen_name?: string;
-      name?: string;
-      profile_image_url_https?: string;
-    };
-
-    return NextResponse.json({
-      configured: true,
-      user: {
-        id: user.id_str,
-        screenName: user.screen_name,
-        name: user.name,
-        avatar: user.profile_image_url_https,
-      },
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        configured: true,
-        user: null,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
-  }
+  const { session, refreshed } = await getLiveSession();
+  const response = NextResponse.json({
+    configured: true,
+    signedIn: Boolean(session),
+    user: session?.user ?? null,
+  });
+  if (refreshed) applySessionCookie(response, session);
+  if (!session) applySessionCookie(response, null);
+  return response;
 }

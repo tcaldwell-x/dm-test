@@ -79,6 +79,7 @@ a { color: var(--accent); }
   padding: 8px 10px;
   min-width: 280px;
 }
+.identity a.btn { text-decoration: none; white-space: nowrap; }
 .identity img { width: 28px; height: 28px; border-radius: 50%; }
 .identity .who { font-weight: 600; }
 .identity .meta { color: var(--muted); font-size: 12px; }

@@ -25,6 +25,7 @@ type Section =
 
 type Status = {
   configured: boolean;
+  signedIn?: boolean;
   user: { id?: string; screenName?: string; name?: string; avatar?: string } | null;
   error?: unknown;
 };
@@ -51,6 +52,12 @@ export function App() {
   useEffect(() => {
     const saved = window.localStorage.getItem("dm-test-recipient");
     if (saved) setRecipientId(saved);
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("error");
+    if (authError) {
+      setResult({ error: `Sign-in failed: ${authError}` });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     void fetch("/api/status")
       .then((response) => response.json())
       .then(setStatus);
@@ -60,7 +67,14 @@ export function App() {
     window.localStorage.setItem("dm-test-recipient", recipientId);
   }, [recipientId]);
 
+  const signedIn = Boolean(status?.user);
+
   async function run(request: ProxyRequest) {
+    if (!signedIn) {
+      const failed = { error: "Sign in with X first." };
+      setResult(failed);
+      return failed;
+    }
     setBusy(true);
     try {
       const response = await fetch("/api/proxy", {
@@ -129,17 +143,19 @@ export function App() {
 
         {section === "overview" && <Overview />}
         {section === "send" && (
-          <SendSection recipientId={recipientId} busy={busy} onRun={run} />
+          <SendSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
         )}
         {section === "feedback" && (
-          <FeedbackSection recipientId={recipientId} busy={busy} onRun={run} />
+          <FeedbackSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
         )}
-        {section === "welcome" && <WelcomeSection busy={busy} onRun={run} />}
-        {section === "rules" && <RulesSection busy={busy} onRun={run} />}
-        {section === "profiles" && <ProfilesSection busy={busy} onRun={run} />}
-        {section === "media" && <MediaSection setResult={setResult} setBusy={setBusy} busy={busy} />}
+        {section === "welcome" && <WelcomeSection busy={busy || !signedIn} onRun={run} />}
+        {section === "rules" && <RulesSection busy={busy || !signedIn} onRun={run} />}
+        {section === "profiles" && <ProfilesSection busy={busy || !signedIn} onRun={run} />}
+        {section === "media" && (
+          <MediaSection setResult={setResult} setBusy={setBusy} busy={busy || !signedIn} />
+        )}
         {section === "inbox" && (
-          <InboxSection recipientId={recipientId} busy={busy} onRun={run} />
+          <InboxSection recipientId={recipientId} busy={busy || !signedIn} onRun={run} />
         )}
         {section === "lookup" && (
           <LookupSection
@@ -158,13 +174,13 @@ export function App() {
 }
 
 function Identity({ status }: { status: Status | null }) {
-  if (!status) return <div className="identity">Checking credentials…</div>;
+  if (!status) return <div className="identity">Checking sign-in…</div>;
   if (!status.configured) {
     return (
       <div className="identity">
         <div>
-          <div className="who">Credentials not set</div>
-          <div className="meta">Add env vars, then redeploy</div>
+          <div className="who">OAuth app not configured</div>
+          <div className="meta">Set X_CLIENT_ID and X_CLIENT_SECRET</div>
         </div>
         <span className="pill bad">offline</span>
       </div>
@@ -174,10 +190,12 @@ function Identity({ status }: { status: Status | null }) {
     return (
       <div className="identity">
         <div>
-          <div className="who">Configured, auth failed</div>
-          <div className="meta">Check token privileges</div>
+          <div className="who">Not signed in</div>
+          <div className="meta">DMs send as the account you authorize</div>
         </div>
-        <span className="pill warn">error</span>
+        <a className="btn primary" href="/api/auth/login">
+          Sign in with X
+        </a>
       </div>
     );
   }
@@ -189,6 +207,16 @@ function Identity({ status }: { status: Status | null }) {
         <div className="meta">{status.user.id}</div>
       </div>
       <span className="pill ok">sending as</span>
+      <Button
+        kind="ghost"
+        onClick={() => {
+          void fetch("/api/auth/logout", { method: "POST" }).then(() => {
+            window.location.reload();
+          });
+        }}
+      >
+        Sign out
+      </Button>
     </div>
   );
 }
@@ -249,10 +277,11 @@ function Overview() {
       </Card>
       <Card title="How to use it">
         <ol>
-          <li>Set OAuth 1.0a user-context credentials in Vercel env vars.</li>
+          <li>Set <code>X_CLIENT_ID</code> and <code>X_CLIENT_SECRET</code> from an X app with User authentication enabled.</li>
+          <li>Add callback URL <code>https://&lt;host&gt;/api/auth/callback</code> (and localhost for local).</li>
+          <li>Sign in with X — requests send as that account.</li>
           <li>Put the recipient’s numeric user ID in the bar above (or look up a handle).</li>
           <li>Send a CSAT card as the control, then an NPS card to reproduce the XChat fallback.</li>
-          <li>Open that 1:1 in XChat as the recipient and compare rendering.</li>
         </ol>
       </Card>
     </div>
@@ -1276,14 +1305,13 @@ function LookupSection({
     const screenName = handle.replace(/^@/, "");
     const json = (await onRun({
       method: "GET",
-      path: "/1.1/users/show.json",
-      query: { screen_name: screenName },
-    })) as { body?: { id_str?: string } };
-    if (typeof json?.body?.id_str === "string") onResolved(json.body.id_str);
+      path: `/2/users/by/username/${encodeURIComponent(screenName)}`,
+    })) as { body?: { data?: { id?: string } } };
+    if (typeof json?.body?.data?.id === "string") onResolved(json.body.data.id);
   }
 
   return (
-    <Card title="GET /1.1/users/show.json" hint="Resolves a handle to a numeric user ID and stores it as the recipient.">
+    <Card title="GET /2/users/by/username/:username" hint="Resolves a handle to a numeric user ID and stores it as the recipient.">
       <Field label="Handle">
         <input
           value={handle}

@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { applySessionCookie, requireAccessToken } from "@/lib/auth";
 import { uploadMedia } from "@/lib/x-client";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const auth = await requireAccessToken();
+  if (!auth.ok) return auth.response;
+
   const form = await request.formData();
   const file = form.get("file");
   const mediaCategory = String(form.get("media_category") ?? "dm_image");
@@ -18,13 +22,18 @@ export async function POST(request: Request) {
   const bytes = new Uint8Array(await file.arrayBuffer());
 
   try {
-    const result = await uploadMedia({
-      bytes,
-      filename: file.name || "upload",
-      mimeType: file.type || "application/octet-stream",
-      mediaCategory,
-    });
-    return NextResponse.json(result);
+    const result = await uploadMedia(
+      {
+        bytes,
+        filename: file.name || "upload",
+        mimeType: file.type || "application/octet-stream",
+        mediaCategory,
+      },
+      auth.token,
+    );
+    const response = NextResponse.json(result);
+    if (auth.refreshed) applySessionCookie(response, auth.session);
+    return response;
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },
