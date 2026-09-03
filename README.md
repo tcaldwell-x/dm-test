@@ -2,7 +2,7 @@
 
 A small Next.js app for sending and inspecting **legacy X API v1.1 Direct Message** requests. Built to reproduce partner bugs like NPS vs CSAT feedback-card rendering in XChat.
 
-Sign in with X (OAuth 2.0 PKCE). Requests send as the account you authorize.
+Sign in with X via **3-legged OAuth 1.0a**. Those v1.1 endpoints do not accept OAuth 2.0 user tokens.
 
 ## What it covers
 
@@ -15,32 +15,32 @@ Sign in with X (OAuth 2.0 PKCE). Requests send as the account you authorize.
 | Welcome rules | new / show / list / destroy |
 | Custom profiles | new / `:id` / list / destroy |
 | Media | `upload.twitter.com/1.1/media/upload.json` (simple + chunked) |
-| Lookup | `GET /2/users/by/username/:username` |
+| Lookup | `GET /1.1/users/show.json` |
 
 NPS and CSAT create forms include every official question variant (NPS 0–9, CSAT 0–37).
 
 ## Setup
 
 1. In the [X Developer Console](https://console.x.com), open your app → **User authentication settings**.
-2. Turn on OAuth 2.0. Type: **Web App**.
-3. Callback URLs:
+2. Turn on **OAuth 1.0a**.
+3. App permissions: **Read and write and Direct message**.
+4. Callback URLs:
    - `http://localhost:3000/api/auth/callback`
    - `https://<your-vercel-host>/api/auth/callback`
-4. Website URL can be the Vercel host or `http://localhost:3000`.
-5. Copy the **Client ID** and **Client Secret**.
+5. Copy the **API Key** and **API Secret** (consumer keys).
 
 ```bash
 cp .env.example .env.local
 ```
 
 ```
-X_CLIENT_ID=
-X_CLIENT_SECRET=
+X_API_KEY=
+X_API_SECRET=
 ```
 
-Optional: `X_REDIRECT_URI` if the auto-detected callback does not match the console. `SESSION_SECRET` to encrypt the login cookie (otherwise `X_CLIENT_SECRET` is used).
+Optional: `X_REDIRECT_URI` if the auto-detected callback does not match the console. `SESSION_SECRET` to encrypt the login cookie (otherwise `X_API_SECRET` is used).
 
-The X app needs `dm.read` and `dm.write`. Feedback create still needs the `feedback_api` client privilege and `feedback_api_access_create` on the signed-in user.
+Feedback create still needs the `feedback_api` client privilege and `feedback_api_access_create` on the signed-in user.
 
 ```bash
 npm install
@@ -60,4 +60,4 @@ Open [http://localhost:3000](http://localhost:3000) and click **Sign in with X**
 
 ## Deploy to Vercel
 
-Connect this repo and set `X_CLIENT_ID` and `X_CLIENT_SECRET`. Add the Vercel URL as a callback in the X app settings.
+Connect this repo and set `X_API_KEY` and `X_API_SECRET`. Add the Vercel URL as an OAuth 1.0a callback in the X app settings. You can remove any leftover `X_CLIENT_ID` / `X_CLIENT_SECRET` vars.

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applySessionCookie, requireAccessToken } from "@/lib/auth";
+import { requireUserAuth } from "@/lib/auth";
 import { callXApi, type ProxyRequest } from "@/lib/x-client";
 
 const ALLOWED_PATHS = [
@@ -31,8 +31,6 @@ const ALLOWED_PATHS = [
   /^\/1\.1\/feedback\/submit\/[^/]+\.json$/,
   /^\/1\.1\/feedback\/dismiss\/[^/]+\.json$/,
   /^\/1\.1\/media\/upload\.json$/,
-  /^\/2\/users\/me$/,
-  /^\/2\/users\/by\/username\/[^/]+$/,
 ];
 
 function isAllowed(path: string, host: string): boolean {
@@ -44,7 +42,7 @@ function isAllowed(path: string, host: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAccessToken();
+  const auth = await requireUserAuth();
   if (!auth.ok) return auth.response;
 
   const payload = (await request.json()) as ProxyRequest;
@@ -58,10 +56,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await callXApi(payload, auth.token);
-    const response = NextResponse.json(result);
-    if (auth.refreshed) applySessionCookie(response, auth.session);
-    return response;
+    const result = await callXApi(payload, auth.credentials);
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Request failed" },

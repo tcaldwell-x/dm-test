@@ -1,25 +1,22 @@
 import { NextResponse } from "next/server";
-import { applySessionCookie, getLiveSession } from "@/lib/auth";
-import { getOAuthConfig } from "@/lib/oauth2";
+import { getConsumer } from "@/lib/oauth1";
+import { readSession } from "@/lib/session";
 
 export async function GET() {
-  const config = getOAuthConfig();
-  if (!config) {
+  const consumer = getConsumer();
+  if (!consumer) {
     return NextResponse.json({
       configured: false,
       signedIn: false,
       user: null,
-      error: "Missing X_CLIENT_ID. Add OAuth 2.0 client credentials to the environment.",
+      error: "Missing X_API_KEY / X_API_SECRET. Add OAuth 1.0a consumer credentials.",
     });
   }
 
-  const { session, refreshed } = await getLiveSession();
-  const response = NextResponse.json({
+  const session = await readSession();
+  return NextResponse.json({
     configured: true,
     signedIn: Boolean(session),
     user: session?.user ?? null,
   });
-  if (refreshed) applySessionCookie(response, session);
-  if (!session) applySessionCookie(response, null);
-  return response;
 }

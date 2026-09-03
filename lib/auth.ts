@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOAuthConfig, refreshAccessToken } from "./oauth2";
+import { getConsumer, type OAuthCredentials } from "./oauth1";
 import {
   SESSION_COOKIE,
   cookieOptions,
@@ -7,36 +7,6 @@ import {
   readSession,
   type Session,
 } from "./session";
-
-export async function getLiveSession(): Promise<{ session: Session | null; refreshed: boolean }> {
-  const current = await readSession();
-  if (!current) return { session: null, refreshed: false };
-
-  const stillValid = current.expiresAt - 60_000 > Date.now();
-  if (stillValid) return { session: current, refreshed: false };
-
-  const config = getOAuthConfig();
-  if (!current.refreshToken || !config) {
-    return { session: null, refreshed: false };
-  }
-
-  try {
-    const tokens = await refreshAccessToken({
-      refreshToken: current.refreshToken,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-    });
-    return {
-      session: {
-        ...current,
-        ...tokens,
-      },
-      refreshed: true,
-    };
-  } catch {
-    return { session: null, refreshed: false };
-  }
-}
 
 export function applySessionCookie(response: NextResponse, session: Session | null) {
   if (!session) {
@@ -47,15 +17,34 @@ export function applySessionCookie(response: NextResponse, session: Session | nu
   return response;
 }
 
-export async function requireAccessToken(): Promise<
-  { ok: true; token: string; session: Session; refreshed: boolean } | { ok: false; response: NextResponse }
+export async function requireUserAuth(): Promise<
+  { ok: true; credentials: OAuthCredentials; session: Session } | { ok: false; response: NextResponse }
 > {
-  const { session, refreshed } = await getLiveSession();
+  const consumer = getConsumer();
+  const session = await readSession();
+  if (!consumer) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Missing X_API_KEY / X_API_SECRET." },
+        { status: 500 },
+      ),
+    };
+  }
   if (!session) {
     return {
       ok: false,
       response: NextResponse.json({ error: "Sign in with X first." }, { status: 401 }),
     };
   }
-  return { ok: true, token: session.accessToken, session, refreshed };
+  return {
+    ok: true,
+    session,
+    credentials: {
+      consumerKey: consumer.consumerKey,
+      consumerSecret: consumer.consumerSecret,
+      token: session.token,
+      tokenSecret: session.tokenSecret,
+    },
+  };
 }

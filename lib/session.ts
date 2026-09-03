@@ -12,21 +12,24 @@ export type SessionUser = {
 };
 
 export type Session = {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
+  token: string;
+  tokenSecret: string;
   user: SessionUser;
 };
 
 export type OAuthPending = {
-  state: string;
-  verifier: string;
+  token: string;
+  tokenSecret: string;
 };
 
 function secretKey(): Buffer {
-  const secret = process.env.SESSION_SECRET || process.env.X_CLIENT_SECRET || process.env.X_CLIENT_ID;
+  const secret =
+    process.env.SESSION_SECRET ||
+    process.env.X_API_SECRET ||
+    process.env.TWITTER_API_SECRET ||
+    process.env.X_API_KEY;
   if (!secret) {
-    throw new Error("Set SESSION_SECRET or X_CLIENT_SECRET to encrypt login cookies.");
+    throw new Error("Set SESSION_SECRET or X_API_SECRET to encrypt login cookies.");
   }
   return crypto.createHash("sha256").update(secret).digest();
 }
@@ -68,7 +71,9 @@ export async function readSession(): Promise<Session | null> {
   const store = await cookies();
   const value = store.get(SESSION_COOKIE)?.value;
   if (!value) return null;
-  return decryptJson<Session>(value);
+  const session = decryptJson<Session>(value);
+  if (!session?.token || !session.tokenSecret || !session.user?.id) return null;
+  return session;
 }
 
 export async function readOAuthPending(): Promise<OAuthPending | null> {

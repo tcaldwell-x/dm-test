@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { applySessionCookie, requireAccessToken } from "@/lib/auth";
+import { requireUserAuth } from "@/lib/auth";
 import { uploadMedia } from "@/lib/x-client";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const auth = await requireAccessToken();
+  const auth = await requireUserAuth();
   if (!auth.ok) return auth.response;
 
   const form = await request.formData();
@@ -29,11 +29,9 @@ export async function POST(request: Request) {
         mimeType: file.type || "application/octet-stream",
         mediaCategory,
       },
-      auth.token,
+      auth.credentials,
     );
-    const response = NextResponse.json(result);
-    if (auth.refreshed) applySessionCookie(response, auth.session);
-    return response;
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },

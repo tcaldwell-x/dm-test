@@ -1,3 +1,5 @@
+import { signOAuth1, type OAuthCredentials } from "./oauth1";
+
 export type ProxyRequest = {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
@@ -30,7 +32,7 @@ function formEncode(body: Record<string, string>): string {
   return new URLSearchParams(body).toString();
 }
 
-export async function callXApi(request: ProxyRequest, accessToken: string): Promise<ProxyResult> {
+export async function callXApi(request: ProxyRequest, credentials: OAuthCredentials): Promise<ProxyResult> {
   const host = request.host ?? "api.twitter.com";
   const query = compactQuery(request.query);
   const url = new URL(`https://${host}${request.path}`);
@@ -41,10 +43,10 @@ export async function callXApi(request: ProxyRequest, accessToken: string): Prom
   const bodyType = request.bodyType ?? "none";
   const headers: Record<string, string> = {
     Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
   };
 
   let rawBody: string | undefined;
+  let extraParams: Record<string, string> | undefined;
   if (bodyType === "json" && request.body !== undefined) {
     rawBody = JSON.stringify(request.body);
     headers["Content-Type"] = "application/json";
@@ -55,7 +57,15 @@ export async function callXApi(request: ProxyRequest, accessToken: string): Prom
         : {};
     rawBody = formEncode(form);
     headers["Content-Type"] = "application/x-www-form-urlencoded";
+    extraParams = form;
   }
+
+  headers.Authorization = signOAuth1({
+    method: request.method,
+    url: url.toString(),
+    credentials,
+    extraParams,
+  });
 
   const started = Date.now();
   const response = await fetch(url, {
@@ -100,13 +110,13 @@ export async function uploadMedia(
     mimeType: string;
     mediaCategory: "dm_image" | "dm_gif" | "dm_video";
   },
-  accessToken: string,
+  credentials: OAuthCredentials,
 ): Promise<ProxyResult> {
   const isChunked = input.mediaCategory === "dm_video" || input.bytes.byteLength > 4_500_000;
   if (!isChunked) {
-    return simpleUpload(input, accessToken);
+    return simpleUpload(input, credentials);
   }
-  return chunkedUpload(input, accessToken);
+  return chunkedUpload(input, credentials);
 }
 
 async function simpleUpload(
@@ -116,8 +126,9 @@ async function simpleUpload(
     mimeType: string;
     mediaCategory: "dm_image" | "dm_gif" | "dm_video";
   },
-  accessToken: string,
+  credentials: OAuthCredentials,
 ): Promise<ProxyResult> {
+  const extraParams = { media_category: input.mediaCategory };
   const url = "https://upload.twitter.com/1.1/media/upload.json";
   const form = new FormData();
   form.set("media_category", input.mediaCategory);
@@ -126,7 +137,14 @@ async function simpleUpload(
   const started = Date.now();
   const response = await fetch(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: signOAuth1({
+        method: "POST",
+        url,
+        credentials,
+        extraParams,
+      }),
+    },
     body: form,
   });
 
@@ -161,7 +179,7 @@ async function chunkedUpload(
     mimeType: string;
     mediaCategory: "dm_image" | "dm_gif" | "dm_video";
   },
-  accessToken: string,
+  credentials: OAuthCredentials,
 ): Promise<ProxyResult> {
   const started = Date.now();
   const init = await callXApi(
@@ -177,7 +195,7 @@ async function chunkedUpload(
         media_category: input.mediaCategory,
       },
     },
-    accessToken,
+    credentials,
   );
 
   if (!init.ok) return init;
@@ -212,7 +230,14 @@ async function chunkedUpload(
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Authorization: signOAuth1({
+          method: "POST",
+          url,
+          credentials,
+          extraParams,
+        }),
+      },
       body: form,
     });
 
@@ -242,7 +267,7 @@ async function chunkedUpload(
         media_id: mediaId,
       },
     },
-    accessToken,
+    credentials,
   );
 
   return {

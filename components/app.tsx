@@ -180,7 +180,7 @@ function Identity({ status }: { status: Status | null }) {
       <div className="identity">
         <div>
           <div className="who">OAuth app not configured</div>
-          <div className="meta">Set X_CLIENT_ID and X_CLIENT_SECRET</div>
+          <div className="meta">Set X_API_KEY and X_API_SECRET</div>
         </div>
         <span className="pill bad">offline</span>
       </div>
@@ -277,9 +277,9 @@ function Overview() {
       </Card>
       <Card title="How to use it">
         <ol>
-          <li>Set <code>X_CLIENT_ID</code> and <code>X_CLIENT_SECRET</code> from an X app with User authentication enabled.</li>
+          <li>Set <code>X_API_KEY</code> and <code>X_API_SECRET</code> (OAuth 1.0a consumer keys).</li>
           <li>Add callback URL <code>https://&lt;host&gt;/api/auth/callback</code> (and localhost for local).</li>
-          <li>Sign in with X — requests send as that account.</li>
+          <li>Sign in with X — v1.1 requests are signed as that account.</li>
           <li>Put the recipient’s numeric user ID in the bar above (or look up a handle).</li>
           <li>Send a CSAT card as the control, then an NPS card to reproduce the XChat fallback.</li>
         </ol>
@@ -1305,13 +1305,14 @@ function LookupSection({
     const screenName = handle.replace(/^@/, "");
     const json = (await onRun({
       method: "GET",
-      path: `/2/users/by/username/${encodeURIComponent(screenName)}`,
-    })) as { body?: { data?: { id?: string } } };
-    if (typeof json?.body?.data?.id === "string") onResolved(json.body.data.id);
+      path: "/1.1/users/show.json",
+      query: { screen_name: screenName },
+    })) as { body?: { id_str?: string } };
+    if (typeof json?.body?.id_str === "string") onResolved(json.body.id_str);
   }
 
   return (
-    <Card title="GET /2/users/by/username/:username" hint="Resolves a handle to a numeric user ID and stores it as the recipient.">
+    <Card title="GET /1.1/users/show.json" hint="Resolves a handle to a numeric user ID and stores it as the recipient.">
       <Field label="Handle">
         <input
           value={handle}

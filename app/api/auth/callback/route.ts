@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { exchangeCode, fetchAuthedUser, getOAuthConfig, getRedirectUri } from "@/lib/oauth2";
+import { fetchAccessToken, fetchAuthedUser, getConsumer, getRedirectUri } from "@/lib/oauth1";
 import {
   OAUTH_COOKIE,
   SESSION_COOKIE,
@@ -9,19 +9,18 @@ import {
 } from "@/lib/session";
 
 function homeUrl(request: Request, error?: string) {
-  const redirect = getRedirectUri(request);
-  const url = new URL("/", redirect);
+  const url = new URL("/", getRedirectUri(request));
   if (error) url.searchParams.set("error", error);
   return url;
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const denied = url.searchParams.get("error");
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
+  const denied = url.searchParams.get("denied");
+  const oauthToken = url.searchParams.get("oauth_token");
+  const verifier = url.searchParams.get("oauth_verifier");
   const pending = await readOAuthPending();
-  const config = getOAuthConfig();
+  const consumer = getConsumer();
 
   const clearOauth = (response: NextResponse) => {
     response.cookies.set(OAUTH_COOKIE, "", cookieOptions(0));
@@ -29,26 +28,31 @@ export async function GET(request: Request) {
   };
 
   if (denied) {
-    return clearOauth(NextResponse.redirect(homeUrl(request, denied)));
+    return clearOauth(NextResponse.redirect(homeUrl(request, "access_denied")));
   }
-  if (!config || !code || !state || !pending || pending.state !== state) {
+  if (!consumer || !oauthToken || !verifier || !pending || pending.token !== oauthToken) {
     return clearOauth(NextResponse.redirect(homeUrl(request, "invalid_oauth_state")));
   }
 
   try {
-    const tokens = await exchangeCode({
-      code,
-      verifier: pending.verifier,
-      redirectUri: getRedirectUri(request),
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
+    const access = await fetchAccessToken({
+      consumerKey: consumer.consumerKey,
+      consumerSecret: consumer.consumerSecret,
+      requestToken: pending.token,
+      requestTokenSecret: pending.tokenSecret,
+      verifier,
     });
-    const user = await fetchAuthedUser(tokens.accessToken);
+    const user = await fetchAuthedUser({
+      consumerKey: consumer.consumerKey,
+      consumerSecret: consumer.consumerSecret,
+      token: access.token,
+      tokenSecret: access.tokenSecret,
+    });
     const response = NextResponse.redirect(homeUrl(request));
     response.cookies.set(OAUTH_COOKIE, "", cookieOptions(0));
     response.cookies.set(
       SESSION_COOKIE,
-      encryptJson({ ...tokens, user }),
+      encryptJson({ token: access.token, tokenSecret: access.tokenSecret, user }),
       cookieOptions(60 * 60 * 24 * 30),
     );
     return response;
