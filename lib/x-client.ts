@@ -189,10 +189,6 @@ async function simpleUploadV2(
   input: MediaUploadInput,
   credentials: OAuthCredentials,
 ): Promise<ProxyResult> {
-  const extraParams = {
-    media_category: input.mediaCategory,
-    media_type: input.mimeType,
-  };
   const form = new FormData();
   form.set("media_category", input.mediaCategory);
   form.set("media_type", input.mimeType);
@@ -203,7 +199,6 @@ async function simpleUploadV2(
     method: "POST",
     url: MEDIA_V2,
     credentials,
-    extraParams,
     body: form,
   });
   const mediaId = mediaIdFrom(result.body);
@@ -275,7 +270,6 @@ async function chunkedUploadV2(
   let segmentIndex = 0;
   for (let offset = 0; offset < input.bytes.byteLength; offset += chunkSize) {
     const chunk = input.bytes.slice(offset, offset + chunkSize);
-    const extraParams = { segment_index: String(segmentIndex) };
     const form = new FormData();
     form.set("segment_index", String(segmentIndex));
     form.set(
@@ -287,7 +281,6 @@ async function chunkedUploadV2(
       method: "POST",
       url: `${MEDIA_V2}/${mediaId}/append`,
       credentials,
-      extraParams,
       body: form,
     });
     steps.push({ step: "append", segment_index: segmentIndex, status: append.status, ok: append.ok });
